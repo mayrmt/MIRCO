@@ -1,58 +1,50 @@
 #include "mirco_contactstatus.h"
 
-#include <Teuchos_SerialDenseMatrix.hpp>
 #include <cmath>
-#include <vector>
 
-void MIRCO::ComputeContactNodes(std::vector<double> &xvf, std::vector<double> &yvf,
-    std::vector<double> &pf, int &nf, Teuchos::SerialDenseMatrix<int, double> y,
-    std::vector<double> xv0, std::vector<double> yv0)
+void MIRCO::ComputeContactNodes(MIRCO::subview_dvec& xvf, MIRCO::subview_dvec& yvf, MIRCO::subview_dvec& pf,
+    const MIRCO::subview_dvec& y, const MIRCO::subview_dvec& xv0, const MIRCO::subview_dvec& yv0)
 {
-  xvf.clear();
-  xvf.resize(y.numRows());
-  yvf.clear();
-  yvf.resize(y.numRows());
-  pf.resize(y.numRows());
-  int cont = 0;
-  // @} Parallelizing this slows down program, so removed it.
-
-#pragma omp for schedule(guided, 16)
-  for (int i = 0; i < y.numRows(); i++)
-  {
-    if (y(i, 0) != 0)
-    {
-#pragma omp critical
+  Kokkos::parallel_scan("pxyvf <- pxyv0",
+      Kokkos::RangePolicy<MIRCO::device_space>(0,y.extent(0)),
+      KOKKOS_LAMBDA (const size_t& i, size_t& k, const bool final)
       {
-        xvf[cont] = xv0[i];
-        yvf[cont] = yv0[i];
-        pf[cont] = y(i, 0);
-        cont += 1;
-      }
-    }
-  }
-
-  nf = cont;
+        const size_t n = y(i) != 0 ? 1 : 0;
+        if (final)
+        {
+          if ( n == 1)
+          {
+            xvf(k) = xv0(i);
+            yvf(k) = yv0(i);
+            pf(k) = y(i);
+          }
+        }
+        k += n;
+      });
 }
 
 void MIRCO::ComputeContactForceAndArea(std::vector<double> &force0, std::vector<double> &area0,
-    double &w_el, int nf, std::vector<double> pf, int k, double GridSize, double LateralLength,
-    double ElasticComplianceCorrection, bool PressureGreenFunFlag)
+    double &w_el, const size_t nf, const MIRCO::subview_dvec& pf,
+    const double GridSize, const double LateralLength,
+    const double ElasticComplianceCorrection, const bool PressureGreenFunFlag)
 {
-  force0.push_back(0);
-  double sum = 0;
-#pragma omp parallel for schedule(static, 16) reduction(+ : sum)  // Always same workload -> Static!
-  for (int i = 0; i < nf; i++)
-  {
-    if (PressureGreenFunFlag)
-    {
-      sum += pf[i] * pow(GridSize, 2);
-    }
-    else
-    {
-      sum += pf[i];
-    }
-  }
-  force0[k] += sum;
-  area0.push_back(nf * (pow(GridSize, 2) / pow(LateralLength, 2)));
-  w_el = force0[k] / ElasticComplianceCorrection;
+  double force_sum = 0;
+  const double GridSize2 = GridSize * GridSize;
+  Kokkos::parallel_reduce("force",
+      nf,
+      KOKKOS_LAMBDA (const size_t& i, double& sum)
+      {
+        if (PressureGreenFunFlag)
+        {
+          sum += pf(i) * GridSize2; // [TODO] possibly make two different kernels
+        }
+        else
+        {
+          sum += pf(i);
+        }
+      },
+      Kokkos::Sum<double>(force_sum));
+  force0.push_back(force_sum);
+  area0.push_back((double)nf * (GridSize2 / pow(LateralLength, 2)));
+  w_el = force_sum / ElasticComplianceCorrection;
 }

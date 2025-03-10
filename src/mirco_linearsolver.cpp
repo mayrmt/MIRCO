@@ -1,32 +1,16 @@
 #include "mirco_linearsolver.h"
 
-#include <Teuchos_RCP.hpp>
-#include <Teuchos_SerialDenseMatrix.hpp>
-#include <Teuchos_SerialDenseVector.hpp>
-#include <Teuchos_SerialSpdDenseSolver.hpp>
-#include <Teuchos_SerialSymDenseMatrix.hpp>
+#include <Adelus.hpp>
+#include <mpi.h>
 
-void MIRCO::LinearSolver::Solve(Teuchos::SerialSymDenseMatrix<int, double>& matrix,
-    Teuchos::SerialDenseVector<int, double>& vector_x,
-    Teuchos::SerialDenseVector<int, double>& vector_b)
+void MIRCO::LinearSolve(const size_t N, MIRCO::adelus_view_mat& matrix)
 {
-  Teuchos::SerialSpdDenseSolver<int, double> solver;
-  int err = solver.setMatrix(Teuchos::rcpFromRef(matrix));
-  if (err != 0)
-  {
-    std::cout << "Error setting matrix for linear solver (1)";
-  }
+  // [TODO] do not gamble where the memory and the execution space is
+  Adelus::AdelusHandle<typename adelus_view_mat::value_type,
+                       typename adelus_view_mat::execution_space,
+                       typename adelus_view_mat::memory_space>ahandle(0, MPI_COMM_WORLD, N, 1, 1); // [TODO] tune for threads/ranks etc.
 
-  err = solver.setVectors(Teuchos::rcpFromRef(vector_x), Teuchos::rcpFromRef(vector_b));
-  if (err != 0)
-  {
-    std::cout << "Error setting vectors for linear solver (2)";
-  }
-
-  solver.factorWithEquilibration(true);
-  err = solver.solve();
-  if (err != 0)
-  {
-    std::cout << "Error setting up solver (3)";
-  }
+  double secs; // seconds the solver took
+  // [TODO] add preconditioner? (former version had 'factorWithEquilibration')
+  Adelus::FactorSolve(ahandle, matrix, &secs);
 }

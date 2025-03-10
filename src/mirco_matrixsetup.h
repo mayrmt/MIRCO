@@ -1,33 +1,12 @@
-#ifndef SRC_MATRIXSETUP_H_
-#define SRC_MATRIXSETUP_H_
+#pragma once
 
-#include <Teuchos_SerialDenseMatrix.hpp>
-#include <vector>
+#include "mirco_kokkos_types.hpp"
 
 namespace MIRCO
 {
-  class MatrixGeneration
-  {
-   public:
-    /**
-     * @brief The aim of this function is to create the influence coefficient matrix (Discrete
-     * version of Green function)
-     *
-     * @param A Influence coefficient matrix (Discrete version of Green Function)
-     * @param xv0 x-coordinates of the points in contact in the previous iteration.
-     * @param yv0 y-coordinates of the points in contact in the previous iteration.
-     * @param GridSize Grid size (length of each cell)
-     * @param CompositeYoungs The composite Young's modulus
-     * @param CompositePoissonsRatio The composite Poisson's ratio
-     * @param systemsize Number of nodes predicted to be in contact
-     * @param PressureGreenFunFlag Flag to use Green function based on uniform pressure instead of
-     * point force
-     */
-    void SetUpMatrix(Teuchos::SerialDenseMatrix<int, double>& A, std::vector<double> xv0,
-        std::vector<double> yv0, double GridSize, double CompositeYoungs,
-        double CompositePoissonsRatio, int systemsize, bool PressureGreenFunFlag);
-    MatrixGeneration() = default;
-  };
+  void SetupMatrix(view_dmat& A,
+      const subview_dvec& xv0, const subview_dvec& yv0,
+      const double GridSize, const double CompositeYoungs,
+      const double CompositePoissonsRatio, const size_t systemsize,
+      const bool PressureGreenFunFlag);
 }  // namespace MIRCO
-
-#endif  // SRC_MATRIXSETUP_H_

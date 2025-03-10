@@ -2,54 +2,44 @@
 
 #include <math.h>
 
-#include <Teuchos_SerialDenseMatrix.hpp>
-#include <vector>
-
-void MIRCO::MatrixGeneration::SetUpMatrix(Teuchos::SerialDenseMatrix<int, double>& A,
-    std::vector<double> xv0, std::vector<double> yv0, double GridSize, double CompositeYoungs,
-    double CompositePoissonsRatio, int systemsize, bool PressureGreenFunFlag)
+void MIRCO::SetupMatrix(MIRCO::view_dmat& A,
+    const MIRCO::subview_dvec& xv0, const MIRCO::subview_dvec& yv0,
+    const double GridSize, const double CompositeYoungs,
+    const double CompositePoissonsRatio, const size_t systemsize,
+    const bool PressureGreenFunFlag)
 {
-  double pi = M_PI;
+  const double pi = M_PI;
   if (PressureGreenFunFlag)
   {
-    for (int i = 0; i < systemsize; i++)
-    {
-      for (int j = 0; j < systemsize; j++)
-      {
-        double k = xv0[i] - xv0[j] + GridSize / 2;
-        double l = xv0[i] - xv0[j] - GridSize / 2;
-        double m = yv0[i] - yv0[j] + GridSize / 2;
-        double n = yv0[i] - yv0[j] - GridSize / 2;
-
-        A(i, j) = (k * log((sqrt(k * k + m * m) + m) / (sqrt(k * k + n * n) + n)) +
-                   l * log((sqrt(l * l + n * n) + n) / (sqrt(l * l + m * m) + m)) +
-                   m * log((sqrt(m * m + k * k) + k) / (sqrt(m * m + l * l) + l)) +
-                   n * log((sqrt(n * n + l * l) + l) / (sqrt(n * n + k * k) + k)));
-      }
-    }
-    A.scale((1 - pow(CompositePoissonsRatio, 2)) / (pi * CompositeYoungs));
+    const double scale = (1 - pow(CompositePoissonsRatio, 2)) / (pi * CompositeYoungs);
+    Kokkos::parallel_for("fill A",
+        Kokkos::MDRangePolicy<Kokkos::Rank<2,Kokkos::Iterate::Left>>({0,0},{systemsize,systemsize}),
+        KOKKOS_LAMBDA (const size_t& i, const size_t& j)
+        {
+          double k = xv0(i) - xv0(j) + GridSize / 2;
+          double l = xv0(i) - xv0(j) - GridSize / 2;
+          double m = yv0(i) - yv0(j) + GridSize / 2;
+          double n = yv0(i) - yv0(j) - GridSize / 2;
+          A(i,j) = (k * log((sqrt(k * k + m * m) + m) / (sqrt(k * k + n * n) + n)) +
+                    l * log((sqrt(l * l + n * n) + n) / (sqrt(l * l + m * m) + m)) +
+                    m * log((sqrt(m * m + k * k) + k) / (sqrt(m * m + l * l) + l)) +
+                    n * log((sqrt(n * n + l * l) + l) / (sqrt(n * n + k * k) + k))) * scale;
+        });
   }
   else
   {
-    double r, raggio = GridSize / 2;
-    double C = 1 / (CompositeYoungs * pi * raggio);
+    const double raggio = GridSize / 2;
+    const double C = 1 / (CompositeYoungs * pi * raggio);
 
-#pragma omp parallel for schedule(static, 16)  // Always same workload -> static
-    for (int i = 0; i < systemsize; i++)
-    {
-      A(i, i) = 1 * C;
-    }
-
-#pragma omp parallel for schedule(static, 16) private(r)  // Always same workload -> static
-    // Every iteration needs to have a different r! -> private(r)
-    for (int i = 0; i < systemsize; i++)
-    {
-      for (int j = 0; j < i; j++)
-      {
-        r = sqrt(pow((xv0[j] - xv0[i]), 2) + pow((yv0[j] - yv0[i]), 2));
-        A(i, j) = C * asin(raggio / r);
-        A(j, i) = C * asin(raggio / r);
-      }
-    }
+    Kokkos::parallel_for("fill A",
+        Kokkos::MDRangePolicy<Kokkos::Rank<2,Kokkos::Iterate::Left>>({0,0},{systemsize,systemsize}),
+        KOKKOS_LAMBDA (const size_t& i, const size_t& j)
+        {
+          const double dx = xv0(j) - xv0(i);
+          const double dy = yv0(j) - yv0(i);
+          const double r2 = dx * dx + dy * dy;
+          const double factor = i != j ? asin(raggio / sqrt(r2)) : 1; // [TODO] possibly move asin and div sqrt to own var and mask it with `i != j` to enforce full SIMD (careful div_by_0)?
+          A(i,j) = C * factor;
+        });
   }
 }

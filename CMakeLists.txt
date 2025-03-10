@@ -22,7 +22,7 @@ option(TRILINOS_IN_MIRCO "Find the Trilinos library in the MIRCO project. If set
 
 if(TRILINOS_IN_MIRCO)
   set(CMAKE_PREFIX_PATH ${TRILINOS_PATH} ${CMAKE_PREFIX_PATH})
-  find_package(Trilinos REQUIRED HINTS ${TRILINOS_PATH} COMPONENTS Teuchos)
+  find_package(Trilinos REQUIRED HINTS ${TRILINOS_PATH} COMPONENTS Teuchos Adelus)
 
   # handle the case of Trililnos < 14.0 by faking the interface target
   if(Trilinos_FOUND AND NOT TARGET Trilinos::all_selected_libs)
@@ -81,6 +81,8 @@ find_package(OpenMP REQUIRED)
 
 # Find OpenMPI
 find_package(MPI REQUIRED)
+
+ADD_DEFINITIONS(-DKKVIEW_API)
 
 # Compile mirco library
 add_library(mirco_core
@@ -143,7 +145,7 @@ configure_package_config_file(cmake/mirco_libConfig.cmake.in
 
 install(FILES
   ${CMAKE_CURRENT_BINARY_DIR}/mirco_libConfig.cmake
-  DESTINATION lib/cmake/mirco 
+  DESTINATION lib/cmake/mirco
   )
 
 install(DIRECTORY ${CMAKE_SOURCE_DIR}/src/ DESTINATION include/mirco FILES_MATCHING PATTERN "*.h*")

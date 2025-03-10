@@ -1,94 +1,65 @@
 #include "mirco_contactpredictors.h"
 
-#include <Teuchos_SerialDenseMatrix.hpp>
-#include <vector>
-
 #include "mirco_warmstart.h"
 
-void MIRCO::ContactSetPredictor(int &n0, std::vector<double> &xv0, std::vector<double> &yv0,
-    std::vector<double> &b0, double zmax, double Delta, double w_el,
-    const std::vector<double> &meshgrid, const Teuchos::SerialDenseMatrix<int, double> &topology)
+void MIRCO::ContactSetPredictorSize(size_t &n0,
+    const double zmax, const double Delta, const double w_el,
+    const MIRCO::view_dmat& topology_view, MIRCO::view_bits& topology_mask) // [TODO] bitset shouldn't be necessary, just recompute
 {
-  std::vector<int> col, row;
-  double value = zmax - Delta - w_el;
-  row.clear();
-  col.clear();
-
-  // Data is even, guided makes more sense
-  for (int i = 0; i < topology.numCols(); i++)
-  {
-    for (int j = 0; j < topology.numCols(); j++)
-    {
-      if (topology(i, j) >= value)
+  const double value = zmax - Delta - w_el;
+  const size_t ni = topology_view.extent(0);
+  const size_t nj = topology_view.extent(1);
+  Kokkos::parallel_for("mask topology",
+      Kokkos::MDRangePolicy<Kokkos::Rank<2,Kokkos::Iterate::Left>>({0,0},{ni,nj}),
+      KOKKOS_LAMBDA (const size_t& i, const size_t& j)
       {
-        row.push_back(i);
-        col.push_back(j);
-      }
-    }
-  }
-
-  n0 = col.size();
-
-  // @{
-  xv0.clear();
-  xv0.resize(n0);
-  yv0.clear();
-  yv0.resize(n0);
-  b0.clear();
-  b0.resize(n0);
-  // @} Parallelizing slows down program here, so not parallel
-
-#pragma omp for schedule(guided, 16)  // Always same workload but testing might be good -> Guided?
-  for (int b = 0; b < n0; b++)
-  {
-    try
-    {
-      xv0[b] = meshgrid[col[b]];
-    }
-    catch (const std::exception &e)
-    {
-    }
-  }
-
-#pragma omp parallel for schedule(guided, 16)  // Same
-  for (int b = 0; b < n0; b++)
-  {
-    try
-    {
-      yv0[b] = meshgrid[row[b]];
-    }
-    catch (const std::exception &e)
-    {
-    }
-  }
-
-#pragma omp parallel for schedule(guided, 16)  // Same
-  for (int b = 0; b < n0; b++)
-  {
-    try
-    {
-      b0[b] = Delta + w_el - (zmax - topology(row[b], col[b]));
-    }
-    catch (const std::exception &e)
-    {
-    }
-  }
+        const size_t k = i * nj + j;
+        if ( topology_view(i,j) >= value )
+        {
+          topology_mask.set(k);
+        }
+        else
+        {
+          topology_mask.reset(k);
+        }
+      });
+  n0 = topology_mask.count();
 }
 
-void MIRCO::InitialGuessPredictor(bool WarmStartingFlag, int k, int n0,
-    const std::vector<double> &xv0, const std::vector<double> &yv0, const std::vector<double> &pf,
-    Teuchos::SerialDenseMatrix<int, double> &x0, const std::vector<double> &b0,
-    const std::vector<double> &xvf, const std::vector<double> &yvf)
+void MIRCO::ContactSetPredictor(MIRCO::subview_dvec& xv0, MIRCO::subview_dvec& yv0, MIRCO::subview_dvec& b0,
+    const double zmax, const double Delta, const double w_el,
+    const MIRCO::view_dvec& meshgrid_view, const MIRCO::view_dmat& topology_view,
+    const MIRCO::view_bits& topology_mask)
+{
+  //const size_t ni = topology_view.extent(0);
+  const size_t nj = topology_view.extent(1);
+
+  Kokkos::parallel_scan("pack topology",
+      Kokkos::RangePolicy<MIRCO::device_space>(0,topology_mask.size()),
+      KOKKOS_LAMBDA (const size_t& k, size_t& I, const bool final)
+      {
+        const bool t = topology_mask.test(k);
+        if (final)
+        {
+          if ( t )
+          {
+            const size_t j = k % nj;
+            const size_t i = k / nj;
+            xv0(I) = meshgrid_view(j);
+            yv0(I) = meshgrid_view(i);
+            b0(I) = Delta + w_el - (zmax - topology_view(i,j));
+          }
+        }
+        I += t ? 1 : 0;
+      });
+}
+
+void MIRCO::InitialGuessPredictor(const bool WarmStartingFlag, const int k,
+    const MIRCO::subview_dvec& xv0, const MIRCO::subview_dvec& yv0, const MIRCO::subview_dvec& pf,
+    MIRCO::subview_dvec& x0, const MIRCO::subview_dvec& xvf, const MIRCO::subview_dvec& yvf)
 {
   if (WarmStartingFlag == 1 && k > 0)
   {
     MIRCO::Warmstart(x0, xv0, yv0, xvf, yvf, pf);
-  }
-  else
-  {
-    if (b0.size() > 0)
-    {
-      x0.shape(n0, 1);
-    }
   }
 }

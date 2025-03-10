@@ -1,27 +1,13 @@
-#ifndef SRC_LINEARSOLVER_H_
-#define SRC_LINEARSOLVER_H_
+#pragma once
 
-#include <Teuchos_SerialDenseMatrix.hpp>
-#include <Teuchos_SerialDenseVector.hpp>
-#include <Teuchos_SerialSymDenseMatrix.hpp>
+#include "mirco_kokkos_types.hpp"
 
 namespace MIRCO
 {
-  class LinearSolver
-  {
-   public:
-    /**
-     * @brief A linear solver to solve matrix*vector_x=vector_b
-     *
-     * @param matrix Influence coefficient matrix (Discrete version of Green Function)
-     * @param vector_x Solution
-     * @param vector_b RHS
-     */
-    void Solve(Teuchos::SerialSymDenseMatrix<int, double>& matrix,
-        Teuchos::SerialDenseVector<int, double>& vector_x,
-        Teuchos::SerialDenseVector<int, double>& vector_b);
-    LinearSolver() = default;
-  };
+  // important! adelus needs layout left
+  // [TODO] do not gamble where the memory and the execution space is
+  typedef Kokkos::View<double**, Kokkos::LayoutLeft, MIRCO::device_space> adelus_view_mat;
+
+  void LinearSolve(const size_t N, adelus_view_mat& matrix);
 }  // namespace MIRCO
 
-#endif  // SRC_LINEARSOLVER_H_

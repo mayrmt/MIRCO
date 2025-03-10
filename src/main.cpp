@@ -2,15 +2,19 @@
 #include <chrono>
 #include <iostream>
 #include <string>
+#include <mpi.h>
 
 #include "mirco_evaluate.h"
 #include "mirco_setparameters.h"
 #include "mirco_topology.h"
 #include "mirco_topologyutilities.h"
-
+#include <Kokkos_Core.hpp>
 
 int main(int argc, char* argv[])
 {
+  MPI_Init(&argc, &argv);
+  Kokkos::initialize (argc, argv);
+
   TEUCHOS_TEST_FOR_EXCEPTION(
       argc != 2, std::invalid_argument, "The code expects (only) an input file as argument");
   // reading the input file name from the command line
@@ -69,4 +73,8 @@ int main(int argc, char* argv[])
   const double elapsedTime =
       std::chrono::duration_cast<std::chrono::seconds>(finish - start).count();
   std::cout << "Elapsed time is: " + std::to_string(elapsedTime) + "s." << std::endl;
+
+  Kokkos::finalize();
+
+  MPI_Finalize();
 }

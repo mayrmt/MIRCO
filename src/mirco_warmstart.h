@@ -1,7 +1,6 @@
-#ifndef SRC_WARMSTART_H_
-#define SRC_WARMSTART_H_
+#pragma once
 
-#include <Teuchos_SerialDenseMatrix.hpp>
+#include "mirco_kokkos_types.hpp"
 
 namespace MIRCO
 {
@@ -18,9 +17,6 @@ namespace MIRCO
    * @param yvf y-coordinates of the points in contact in the previous iteration.
    * @param pf Contact force at (xvf,yvf) predicted in the previous iteration.
    */
-  void Warmstart(Teuchos::SerialDenseMatrix<int, double>& x0, const std::vector<double>& xv0,
-      const std::vector<double>& yv0, const std::vector<double>& xvf,
-      const std::vector<double>& yvf, const std::vector<double>& pf);
+  template<typename T>
+  void Warmstart(T& x0, const T& xv0, const T& yv0, const T& xvf, const T& yvf, const T& pf);
 }  // namespace MIRCO
-
-#endif  // SRC_WARMSTART_H_

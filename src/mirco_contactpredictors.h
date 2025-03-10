@@ -1,11 +1,13 @@
-#ifndef SRC_CONTACTPREDICTORS_H_
-#define SRC_CONTACTPREDICTORS_H_
+#pragma once
 
-#include <Teuchos_SerialDenseMatrix.hpp>
-#include <vector>
+#include "mirco_kokkos_types.hpp"
 
 namespace MIRCO
 {
+  void ContactSetPredictorSize(size_t& n0,
+      const double zmax, const double Delta, const double w_el,
+      const view_dmat& topology_view, view_bits& topology_mask);
+
   /**
    * @brief The aim of this function is to determine all the points, for which the gap is bigger
    * than the displacement of the rigid indenter, cannot be in contact and thus are not checked in
@@ -21,9 +23,10 @@ namespace MIRCO
    * @param meshgrid Meshgrid
    * @param topology Topology matrix containing heights
    */
-  void ContactSetPredictor(int &n0, std::vector<double> &xv0, std::vector<double> &yv0,
-      std::vector<double> &b0, double zmax, double Delta, double w_el,
-      const std::vector<double> &meshgrid, const Teuchos::SerialDenseMatrix<int, double> &topology);
+  void ContactSetPredictor(subview_dvec& xv0, subview_dvec& yv0, subview_dvec& b0,
+      const double zmax, const double Delta, const double w_el,
+      const view_dvec& meshgrid_view, const view_dmat& topology_view,
+      const view_bits& topology_mask);
 
   /**
    * @brief The aim of this function is to guess the set of nodes in contact among the nodes
@@ -42,10 +45,7 @@ namespace MIRCO
    * @param xvf x-coordinates of the points in contact in the previous iteration.
    * @param yvf y-coordinates of the points in contact in the previous iteration.
    */
-  void InitialGuessPredictor(bool WarmStartingFlag, int k, int n0, const std::vector<double> &xv0,
-      const std::vector<double> &yv0, const std::vector<double> &pf,
-      Teuchos::SerialDenseMatrix<int, double> &x0, const std::vector<double> &b0,
-      const std::vector<double> &xvf, const std::vector<double> &yvf);
+  void InitialGuessPredictor(const bool WarmStartingFlag, const int k,
+      const subview_dvec& xv0, const subview_dvec& yv0, const subview_dvec& pf,
+      subview_dvec& x0, const subview_dvec& xvf, const subview_dvec& yvf);
 }  // namespace MIRCO
-
-#endif  // SRC_CONTACTPREDICTORS_H_

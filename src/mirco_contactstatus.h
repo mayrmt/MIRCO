@@ -1,9 +1,9 @@
-#ifndef SRC_CONTACTSTATUS_H_
-#define SRC_CONTACTSTATUS_H_
+#pragma once
 
-#include <Teuchos_SerialDenseMatrix.hpp>
 #include <cmath>
 #include <vector>
+
+#include "mirco_kokkos_types.hpp"
 
 namespace MIRCO
 {
@@ -13,14 +13,12 @@ namespace MIRCO
    * @param xvf x-coordinates of the points in contact in the previous iteration.
    * @param yvf y-coordinates of the points in contact in the previous iteration.
    * @param pf Contact force at (xvf,yvf) predicted in the previous iteration.
-   * @param nf Number of nodes in contact in the previous iteration
    * @param y Solution containing force
    * @param xv0 x-coordinates of the points in contact in the previous iteration.
    * @param yv0 y-coordinates of the points in contact in the previous iteration.
    */
-  void ComputeContactNodes(std::vector<double> &xvf, std::vector<double> &yvf,
-      std::vector<double> &pf, int &nf, Teuchos::SerialDenseMatrix<int, double> y,
-      std::vector<double> xv0, std::vector<double> yv0);
+  void ComputeContactNodes(subview_dvec& xvf, subview_dvec& yvf, subview_dvec& pf,
+      const subview_dvec& y, const subview_dvec& xv0, const subview_dvec& yv0);
 
   /**
    * @brief The aim of this function is to calulate the contact force and contact area for the
@@ -39,8 +37,7 @@ namespace MIRCO
    * point force
    */
   void ComputeContactForceAndArea(std::vector<double> &force0, std::vector<double> &area0,
-      double &w_el, int nf, std::vector<double> pf, int k, double GridSize, double LateralLength,
-      double ElasticComplianceCorrection, bool PressureGreenFunFlag);
+      double &w_el, const size_t nf, const subview_dvec& pf,
+      const double GridSize, const double LateralLength,
+      const double ElasticComplianceCorrection, const bool PressureGreenFunFlag);
 }  // namespace MIRCO
-
-#endif  // SRC_CONTACTSTATUS_H_

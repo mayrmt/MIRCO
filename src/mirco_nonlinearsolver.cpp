@@ -1,113 +1,76 @@
 #include "mirco_nonlinearsolver.h"
-
-#include <Teuchos_SerialDenseMatrix.hpp>
-#include <Teuchos_SerialDenseVector.hpp>
-#include <Teuchos_SerialSymDenseMatrix.hpp>
-#include <vector>
-
 #include "mirco_linearsolver.h"
+#include <Kokkos_ScatterView.hpp>
 
-void MIRCO::NonLinearSolver::NonlinearSolve(const Teuchos::SerialDenseMatrix<int, double>& matrix,
-    const std::vector<double>& b0, const Teuchos::SerialDenseMatrix<int, double>& y0,
-    Teuchos::SerialDenseMatrix<int, double>& w, Teuchos::SerialDenseVector<int, double>& y)
+typedef Kokkos::MinLoc<double,size_t>::value_type KK_minloc_type;
+
+template<typename T>
+void MIRCO::NonlinearSolve(const MIRCO::view_dmat& matrix,
+    const T& b0, const T& y0,
+    T& w, T& y, T& s0,
+    double* mem_matrix, MIRCO::view_ivec& P)
 {
-  double nnlstol = 1.0000e-08;
-  double maxiter = 10000;
-  double eps = 2.2204e-16;
-  double alphai = 0;
+  const double nnlstol = 1.0000e-08;
+  const size_t maxiter = 10000;
+  const double eps = 2.2204e-16;
   double alpha = 100000000;
-  int iter = 0;
+  size_t iter = 0;
   bool init = false;
-  int n0 = b0.size();
-  y.size(n0);
-  y.putScalar(0.0);
-  Teuchos::SerialDenseMatrix<int, double> s0;
-  std::vector<int> P(n0);
-  Teuchos::SerialDenseVector<int, double> vector_x, vector_b;
-  Teuchos::SerialSymDenseMatrix<int, double> solverMatrix;
+  size_t n0 = b0.extent(0);
+
+  Kokkos::parallel_for("zero y", n0, KOKKOS_LAMBDA (const size_t& i) { y(i) = 0.0; });
+  Kokkos::parallel_for("zero w", n0, KOKKOS_LAMBDA (const size_t& i) { w(i) = 0.0; });
 
   // Initialize active set
-  std::vector<int> positions;
-  for (int i = 0; i < y0.numRows(); i++)
-  {
-    if (y0(i, 0) >= nnlstol)
-    {
-      positions.push_back(i);
-    }
-  }
-
-  int counter = 0;
-  counter = positions.size();
-  w.reshape(n0, 1);
-  w.putScalar(0.0);
+  size_t counter = 0;
+  Kokkos::parallel_reduce("counter",
+      Kokkos::RangePolicy<MIRCO::device_space>(0,y0.extent(0)),
+      KOKKOS_LAMBDA (const size_t& i, size_t& k) { k += y0(i) >= nnlstol ? 1 : 0; },
+      Kokkos::Sum<size_t>(counter));
+  Kokkos::parallel_scan("positons (P)",
+      Kokkos::RangePolicy<MIRCO::device_space>(0,y0.extent(0)),
+      KOKKOS_LAMBDA (const size_t& i, size_t& k, const bool final)
+      {
+        const size_t n = y0(i) >= nnlstol ? 1 : 0;
+        if (final) { if ( n == 1) P(k) = i; }
+        k += n;
+      });
 
   if (counter == 0)
   {
-#pragma omp parallel for schedule(static, 16)  // Always same workload -> static
-    for (int x = 0; x < n0; x++)
-    {
-      w(x, 0) = -b0[x];
-    }
-
+    Kokkos::parallel_for("w = -b0", n0, KOKKOS_LAMBDA (const size_t& i) { w(i) = -b0(i); });
     init = false;
   }
   else
   {
-#pragma omp parallel for schedule(static, 16)  // Always same workload -> static
-    for (int i = 0; i < counter; i++)
-    {
-      P[i] = positions[i];
-    }
-
     init = true;
   }
 
-  s0.shape(n0, 1);
   bool aux1 = true, aux2 = true;
 
   // New searching algorithm
-  std::vector<double> values, newValues;
-  std::vector<int> poss, newPositions;
-  double minValue = w(0, 0);
-  int minPosition = 0;
+  double minValue;
+  int minPosition;
+
+  KK_minloc_type w_minloc;
+  KK_minloc_type alpha_minloc;
 
   while (aux1 == true)
   {
-    // @{
-    for (int i = 0; i < w.numRows(); i++)
-    {
-      values.push_back(w(i, 0));
-      poss.push_back(i);
-    }
-
-    // Get all values bigger than initial one
-    while (values.size() > 1)
-    {
-      for (unsigned long int i = 1; i < values.size(); i++)
-      {
-        if (values[i] < values[0])
+    Kokkos::parallel_reduce("min pos w",
+        w.extent(0),
+        KOKKOS_LAMBDA (const size_t& i, KK_minloc_type& minloc)
         {
-          newValues.push_back(values[i]);
-          newPositions.push_back(poss[i]);
-        }
-      }
+          const double val = w(i);
+          if( val < minloc.val )
+          {
+            minloc.val = val; minloc.loc = i;
+          }
+        },
+        Kokkos::MinLoc<double,size_t>(w_minloc));
 
-      if (newValues.size() == 0)
-      {
-        newValues.push_back(values[0]);
-        newPositions.push_back(poss[0]);
-      }
-
-      values = newValues;
-      poss = newPositions;
-      newValues.clear();
-      newPositions.clear();
-    }
-    minValue = values[0];
-    minPosition = poss[0];
-    values.clear();
-    poss.clear();
-    // }
+    minValue = w_minloc.val;
+    minPosition = w_minloc.loc;
 
     if (((counter == n0) || (minValue > -nnlstol) || (iter >= maxiter)) && (init == false))
     {
@@ -115,121 +78,114 @@ void MIRCO::NonLinearSolver::NonlinearSolve(const Teuchos::SerialDenseMatrix<int
     }
     else
     {
-      if (init == false)
-      {
-        P[counter] = minPosition;
-        counter += 1;
-      }
-      else
-      {
-        init = false;
-      }
+      if (init == false) { P(counter) = minPosition; counter += 1; } else { init = false; }
     }
 
-    int j = 0;
+    size_t j = 0;
     aux2 = true;
     while (aux2 == true)
     {
       iter++;
-      vector_x.size(counter);
-      vector_b.size(counter);
-      solverMatrix.shape(counter);
+      // important! adelus needs layout left
+      MIRCO::adelus_view_mat M(mem_matrix, counter, counter + 1); // [TODO] force device space if available
+      auto vector_x = Kokkos::subview(M, Kokkos::ALL(), counter);
 
-#pragma omp parallel for schedule(static, 16)  // Always same workload -> Static!
-      for (int x = 0; x < counter; x++)
-      {
-        vector_b(x) = b0[P[x]];
+      Kokkos::parallel_for("mask topology",
+          Kokkos::MDRangePolicy<Kokkos::Rank<2,Kokkos::Iterate::Left>>({0,0},{counter,counter}),
+          KOKKOS_LAMBDA (const size_t& i, const size_t& j)
+          {
+            M(i,j) = matrix(P(i), P(j));
+          });
+      Kokkos::parallel_for("vector_b",
+          counter,
+          KOKKOS_LAMBDA (const size_t& i) { vector_x(i) = b0(P(i)); });
 
-        for (int z = 0; z < counter; z++)
-        {
-          if (x >= z)
-            solverMatrix(x, z) = matrix(P[x], P[z]);
-          else
-            solverMatrix(z, x) = matrix(P[x], P[z]);
-        }
-      }
-      // Solving solverMatrix*vector_x=vector_b
-      MIRCO::LinearSolver solution;
-      solution.Solve(solverMatrix, vector_x, vector_b);
+      MIRCO::LinearSolve(counter, M);
 
-#pragma omp parallel for schedule(static, 16)  // Always same workload -> Static!
-      for (int x = 0; x < counter; x++)
-      {
-        s0(P[x], 0) = vector_x(x);
-      }
+      Kokkos::parallel_for("s0(P(i)) = vector_x(i)", counter, KOKKOS_LAMBDA (const size_t& i) { s0(P(i)) = vector_x(i); });
 
       bool allBigger = true;
-#pragma omp parallel for schedule(static, 16)  // Always same workload -> Static!
-      for (int x = 0; x < counter; x++)
-      {
-        if (s0(P[x], 0) < nnlstol)
-        {
-          allBigger = false;
-        }
-      }
+      Kokkos::parallel_reduce("allBigger",
+          counter, // [TODO] why do you operate on indirect s0 instead of vector_x ?
+          KOKKOS_LAMBDA (const size_t& i, bool& r)
+          {
+            const bool t = s0(P(i)) < nnlstol;
+            r = r && !t;
+          },
+          Kokkos::LAnd<bool>(allBigger));
 
       if (allBigger == true)
       {
         aux2 = false;
-#pragma omp parallel for schedule(guided, 16)
-        for (int x = 0; x < counter; x++)
+        Kokkos::parallel_for("y <- s0", counter, KOKKOS_LAMBDA (const size_t& i) { y(P(i)) = s0(P(i)); }); // [TODO] why P indirection?
+        Kokkos::parallel_for("w = -b0", matrix.extent(0), KOKKOS_LAMBDA (const size_t& i) { w(i) = -b0(i); });
         {
-          y(P[x]) = s0(P[x], 0);
-        }
-        w.scale(0.0);
-#pragma omp parallel for schedule(dynamic, 16)
-        for (int a = 0; a < matrix.numRows(); a++)
-        {
-          w(a, 0) = 0;
-          for (int b = 0; b < counter; b++)
-          {
-            w(a, 0) += (matrix(a, P[b]) * y(P[b]));
-          }
-          w(a, 0) -= b0[a];
+          auto w_scatter = Kokkos::Experimental::create_scatter_view(w);
+          Kokkos::parallel_for("w <- matrix * y | filtered P",
+              Kokkos::MDRangePolicy<Kokkos::Rank<2,Kokkos::Iterate::Left>>({0,0},{matrix.extent(0),counter}),
+              KOKKOS_LAMBDA (const size_t i, const size_t j)
+              {
+                auto access = w_scatter.access();
+                // [TODO] there should be a much nicer way to achieve this, but the indirection is fucking us here
+                access(i) += (matrix(i, P(j)) * y(P(j)));
+              });
+          Kokkos::Experimental::contribute(w, w_scatter);
         }
       }
       else
       {
-        j = 0;
-        alpha = 1.0e8;
-
         // Searching for minimum value with index position
-#pragma omp parallel
-        {
-          int jP = 0;
-          double alphaP = alpha;
-#pragma omp parallel for schedule(guided, 16)  // Even, guided seems fitting
-          for (int i = 0; i < counter; i++)
-          {
-            if (s0(P[i], 0) < nnlstol)
+        Kokkos::parallel_reduce("min pos alpha",
+            counter,
+            KOKKOS_LAMBDA (const size_t& i, KK_minloc_type& minloc)
             {
-              alphai = y(P[i]) / (eps + y(P[i]) - s0(P[i], 0));
-              if (alphai < alphaP)
+              if ( s0(P(i)) < nnlstol ) // [TODO] why indirection?
               {
-                alphaP = alphai;
-                jP = i;
+                const double alphai = y(P(i)) / (eps + y(P(i)) - s0(P(i)));
+                if( alphai < minloc.val )
+                {
+                  minloc.val = alphai; minloc.loc = i;
+                }
               }
-            }
-          }
-#pragma omp critical
-          {
-            alpha = alphaP;
-            j = jP;
-          }
-        }
+            },
+            Kokkos::MinLoc<double,size_t>(alpha_minloc));
 
-        // TODO: WHAT BELONGS TO THIS LOOP?????????????????????
-#pragma omp parallel for schedule(guided, 16)
-        for (int a = 0; a < counter; a++) y(P[a]) = y(P[a]) + alpha * (s0(P[a], 0) - y(P[a]));
-        if (j > 0)
+        alpha = alpha_minloc.val;
+        j = alpha_minloc.loc;
+
+        // TODO: WHAT BELONGS TO THIS LOOP????????????????????? // [TODO] don't know, now it is gone
+        Kokkos::parallel_for("y <- y + alpha * (s0 - y)",
+            counter, // [TODO] why P indirection?
+            KOKKOS_LAMBDA (const size_t& i)
+            {
+              y(P(i)) = y(P(i)) + alpha * (s0(P(i)) - y(P(i)));
+            });
+
+        if ( j > 0 )
         {
-          // jth entry in P leaves active set
-          s0(P[j], 0) = 0;
-          P.erase(P.begin() + j);
-#pragma omp atomic  // Necessary?
+          MIRCO::view_dvec temp(mem_matrix, counter); // [TODO] force device space if available
+          Kokkos::deep_copy(temp, Kokkos::subview(P, Kokkos::pair<size_t,size_t>(0,counter))); // use part of matrix for buffer in order to possibly avoid race conditions
+          s0(P(j)) = 0;
+          Kokkos::parallel_scan("remove P(j)",
+              Kokkos::RangePolicy<MIRCO::device_space>(0,counter),
+              KOKKOS_LAMBDA (const size_t& i, size_t& k, const bool final)
+              {
+                const size_t n = i == j ? 0 : 1;
+                if (final) { if ( n == 1 ) P(k) = temp(i); }
+                k += n;
+              });
           counter -= 1;
         }
       }
     }
   }
 }
+
+template void MIRCO::NonlinearSolve(const MIRCO::view_dmat&,
+    const MIRCO::subview_dvec&, const MIRCO::subview_dvec&,
+    MIRCO::subview_dvec&, MIRCO::subview_dvec&, MIRCO::subview_dvec&,
+    double*, MIRCO::view_ivec&);
+template void MIRCO::NonlinearSolve(const MIRCO::view_dmat&,
+    const MIRCO::view_dvec&, const MIRCO::view_dvec&,
+    MIRCO::view_dvec&, MIRCO::view_dvec&, MIRCO::view_dvec&,
+    double*, MIRCO::view_ivec&);

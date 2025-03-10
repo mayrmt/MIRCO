@@ -1,24 +1,25 @@
 #include "mirco_warmstart.h"
 
-#include <Teuchos_SerialDenseMatrix.hpp>
-#include <vector>
-
-void MIRCO::Warmstart(Teuchos::SerialDenseMatrix<int, double>& x0, const std::vector<double>& xv0,
-    const std::vector<double>& yv0, const std::vector<double>& xvf, const std::vector<double>& yvf,
-    const std::vector<double>& pf)
+template<typename T>
+void MIRCO::Warmstart(T& x0, const T& xv0, const T& yv0, const T& xvf, const T& yvf, const T& pf)
 {
-  x0.shape(xv0.size(), 1);
-
-  for (size_t i = 0; i < xv0.size(); i++)
+  const size_t invalid_j = xvf.extent(0);
+  size_t j;
+  // [TODO] there should be a nicer way
+  for (size_t i = 0; i < xv0.extent(0); ++i)
   {
-    auto it_x = std::find(xvf.begin(), xvf.end(), xv0[i]);
-    auto it_y = std::find(yvf.begin(), yvf.end(), yv0[i]);
-
-    if (it_x != xvf.end() && it_y != yvf.end() &&
-        std::distance(xvf.begin(), it_x) == std::distance(yvf.begin(), it_y))
-    {
-      size_t j = std::distance(xvf.begin(), it_x);
-      x0(i, 0) = pf[j];
-    }
+    double curr_xv0 = xv0(i);
+    double curr_yv0 = yv0(i);
+    Kokkos::parallel_reduce("find same xv0 yv0",
+        Kokkos::RangePolicy<MIRCO::device_space>(0,xvf.extent(0)),
+        KOKKOS_LAMBDA (const size_t& i, size_t& k)
+        {
+          k = xvf(i) == curr_xv0 && yvf(i) == curr_yv0 ? i : invalid_j;
+        },
+        Kokkos::Min<size_t>(j));
+    if ( j < invalid_j ) x0(i) = pf(j);
   }
 }
+
+template void MIRCO::Warmstart(MIRCO::view_dvec&, const MIRCO::view_dvec&, const MIRCO::view_dvec&, const MIRCO::view_dvec&, const MIRCO::view_dvec&, const MIRCO::view_dvec&);
+template void MIRCO::Warmstart(MIRCO::subview_dvec&, const MIRCO::subview_dvec&, const MIRCO::subview_dvec&, const MIRCO::subview_dvec&, const MIRCO::subview_dvec&, const MIRCO::subview_dvec&);
